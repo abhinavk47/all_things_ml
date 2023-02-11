@@ -1,5 +1,6 @@
 import math
 import pandas as pd
+import copy
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
 import argparse
@@ -166,8 +167,92 @@ class DecisionTree():
         return tree
 
     def handle_missing_values(self, data):
+        """
+            Naive fix to handle values missing from training data
+        """
+        # get the most frequent target value from training data
         most_common_target_value = data[self.outcome].value_counts().idxmax()
         self.most_common_target_value = most_common_target_value
+    
+    def compute_error_rate(self, tree, data):
+        """
+            Computes error rate
+
+            Parameters:
+                tree (dict): decision tree
+                data (Dataframe): Training data
+            
+            Returns:
+                float: Error rate
+        """
+        # initialize the number of incorrect predictions
+        num_incorrect = 0
+        
+        for index, row in data.iterrows():
+            # make a prediction for sample using the tree
+            sample = dict(row)
+            true_label = sample.pop(outcome)
+            predicted_label = self.predict(tree, sample)
+
+            # if the prediction is incorrect, increment the number of incorrect predictions
+            if true_label != predicted_label:
+                num_incorrect += 1
+
+        return num_incorrect / len(data)
+
+    def prune_tree(self, tree, data):
+        """
+            Prune given tree
+
+            Parameters:
+                tree (dict): decision tree
+            
+            Returns:
+                dict: Prunes tree
+        """
+        # Check if tree is a leaf node
+        if type(tree) != dict:
+            return tree
+        tree_copy = copy.deepcopy(tree)
+
+        # Traverse the subtrees
+        feature = list(tree.keys())[0]
+        for subtree in tree[feature].values():
+            self.prune_tree(subtree, data)
+        
+        # If pruning increased the error rate return restored tree
+        if self.compute_error_rate(tree, data) > self.compute_error_rate(tree_copy, data):
+            return tree_copy
+        else:
+            return tree
+    
+    def reduced_error_pruning(self, tree, data):
+        """
+            Removes subtrees that doesn't reduce the error rate
+
+            Parameters:
+                tree (dict): decision tree
+                data (Dataframe): Training data
+            
+            Returns:
+                dict: Pruned tree
+        """
+        # Check if tree is a leaf node
+        if type(tree) != dict:
+            return tree
+        tree_copy = copy.deepcopy(tree)
+
+        # Traverse the subtrees
+        feature = list(tree.keys())[0]
+        for subtree in tree[feature].values():
+            subtree = self.reduced_error_pruning(subtree, data)
+        tree_copy = self.prune_tree(tree_copy, data)
+
+        # If pruning increased the error rate return restored tree
+        if self.compute_error_rate(tree, data) > self.compute_error_rate(tree_copy, data):
+            return tree_copy
+        else:
+            return tree
     
     def predict(self, tree, sample):
         """
@@ -195,11 +280,14 @@ def main(training_data_path, outcome):
     
     # Initiate decision tree object
     decision_tree = DecisionTree(outcome)
-    train_data, test_data = train_test_split(data, test_size=0.2, random_state=1)
+    train_data, test_data = train_test_split(data, test_size=0.2, random_state=5)
     decision_tree.handle_missing_values(train_data)
     
     # Build decision tree
     model = decision_tree.build_decision_tree(train_data, features)
+
+    # Pruning
+    model = decision_tree.reduced_error_pruning(model, train_data)
     
     # Predict for the test data
     true_labels = []
